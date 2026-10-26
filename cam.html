@@ -22,6 +22,7 @@ body.live #dot{animation:blink 1s steps(2) infinite}
 @keyframes blink{50%{opacity:.2}}
 #info{font-size:15px;line-height:1.5;min-height:46px}
 #preview{width:100%;aspect-ratio:4/3;background:#050a0c;margin:16px 0;object-fit:cover;outline:1px solid #0a3a42}
+body.square #preview{aspect-ratio:1}
 body.live.nopreview #preview,body:not(.live) #preview{display:none}
 label{display:block;font-size:12px;letter-spacing:2px;color:var(--cyan-dim);margin:14px 0 6px}
 input,select{width:100%;font:inherit;font-size:17px;padding:12px;background:#02171c;color:var(--txt);
@@ -58,7 +59,7 @@ body.armed:not(.live) #settings,body.armed:not(.live) .ghost{display:none}
     </div>
     <div>
       <label for="quality">QUALITY</label>
-      <select id="quality"><option value="low">640×480</option><option value="mid">1280×720</option></select>
+      <select id="quality"><option value="low">640×480</option><option value="square">600×600 square</option></select>
     </div>
   </div>
   <label><input id="showPrev" type="checkbox" style="width:auto;margin-right:8px" checked>Show preview while live</label>
@@ -84,7 +85,7 @@ const store = {
 $('#key').value = P.get('k') || store.get('key', '');
 $('#room').value = P.get('room') || store.get('room', 'cam1');
 $('#facing').value = store.get('facing', 'environment');
-$('#quality').value = store.get('quality', 'low');
+$('#quality').value = store.get('quality', 'low') === 'square' ? 'square' : 'low';
 $('#showPrev').checked = store.get('prev', '1') === '1';
 if (P.get('k')) { store.set('key', P.get('k')); history.replaceState(null, '', location.pathname); }
 
@@ -113,13 +114,27 @@ async function api(a, data) {
 
 /* ---------- media ---------- */
 function constraints() {
-  const hi = $('#quality').value === 'mid';
+  // Square matches the glasses' 600×600 screen pixel for pixel; the browser crops the camera image itself.
+  const sq = $('#quality').value === 'square';
+  const size = sq
+    ? { width: { exact: 600 }, height: { exact: 600 }, resizeMode: 'crop-and-scale' }
+    : { width: { ideal: 640 }, height: { ideal: 480 } };
   return {
-    video: { facingMode: $('#facing').value, width: { ideal: hi ? 1280 : 640 }, height: { ideal: hi ? 720 : 480 },
-             frameRate: { ideal: 15, max: 20 } },
+    video: { facingMode: $('#facing').value, ...size, frameRate: { ideal: 15, max: 20 } },
     // Off: echo cancelling, noise suppression and auto-gain would hide the quiet sounds you want to hear.
     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
   };
+}
+
+async function getMedia() {
+  try { return await navigator.mediaDevices.getUserMedia(constraints()); }
+  catch (e) {
+    if (e.name !== 'OverconstrainedError') throw e;
+    log('This camera cannot do an exact square; using the nearest size');
+    const c = constraints();
+    c.video.width = { ideal: 600 }; c.video.height = { ideal: 600 }; c.video.aspectRatio = { ideal: 1 };
+    return navigator.mediaDevices.getUserMedia(c);
+  }
 }
 
 /* ---------- keep screen on while armed (Android stops timers when it sleeps) ---------- */
@@ -143,7 +158,7 @@ async function arm() {
   try {
     await api('status');                         // checks the key before we go any further
     // Ask for camera + mic once now, so a call later doesn't need a tap.
-    const s = await navigator.mediaDevices.getUserMedia(constraints());
+    const s = await getMedia();
     s.getTracks().forEach(t => t.stop());
   } catch (e) { setState('', 'OFF', 'Could not arm: ' + e.message); log(e.message); return; }
   armed = true;
@@ -193,7 +208,7 @@ async function answer(offer) {
   setState('live', 'CONNECTING', 'Glasses are calling…');
   try {
     const { iceServers } = await api('ice');
-    stream = await navigator.mediaDevices.getUserMedia(constraints());
+    stream = await getMedia();
     pc = new RTCPeerConnection({ iceServers });
     stream.getTracks().forEach(t => pc.addTrack(t, stream));
     pc.ondatachannel = e => { e.channel.onclose = () => endCall('Viewer hung up'); };
@@ -208,9 +223,20 @@ async function answer(offer) {
     };
     await pc.setRemoteDescription(offer);
     await pc.setLocalDescription(await pc.createAnswer());
+    // For a monitor, sharpness beats smoothness: if the connection is tight, drop frames, not resolution.
+    for (const s of pc.getSenders()) {
+      if (s.track && s.track.kind === 'video') {
+        try {
+          const p = s.getParameters();
+          p.degradationPreference = 'maintain-resolution';
+          await s.setParameters(p);
+        } catch (e) { log('Could not lock resolution: ' + e.message); }
+      }
+    }
     await gathered(pc);
     await api('answer', { answer: pc.localDescription });
     body.classList.toggle('nopreview', !$('#showPrev').checked);
+    body.classList.toggle('square', $('#quality').value === 'square');
     $('#preview').srcObject = stream;
     $('#endBtn').hidden = false;
     callTimer = setTimeout(() => endCall('Time limit reached'), MAX_CALL_S * 1000);
