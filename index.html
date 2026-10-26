@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=600, initial-scale=1, user-scalable=no">
+<title>Monitor Test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --cyan:#22e6ff; --cyan-dim:#2a9fb0; --amber:#ffb020; --txt:#bfefff; --red:#ff4d4d;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:600px;height:600px;background:#000;color:var(--txt);
+  font-family:'Chakra Petch',system-ui,sans-serif;overflow:hidden;user-select:none}
+
+/* ---------- video ---------- */
+#vid{position:absolute;inset:0;width:600px;height:600px;object-fit:contain;background:#000;
+  transition:filter .25s,opacity .3s}
+body.listen #vid{opacity:0}
+body.listen.awake #vid{opacity:1}
+
+/* ---------- HUD top ---------- */
+#top{position:absolute;left:16px;right:16px;top:14px;display:flex;justify-content:space-between;
+  align-items:flex-start;pointer-events:none;text-shadow:0 0 6px #000,0 0 2px #000}
+#title{font-weight:700;font-size:20px;letter-spacing:2px;color:var(--cyan)}
+#diag{font-size:14px;line-height:1.35;margin-top:2px;color:var(--txt);max-width:430px}
+#timer{font-weight:700;font-size:26px;color:var(--cyan);letter-spacing:1px;text-align:right}
+#timer small{display:block;font-size:12px;font-weight:400;letter-spacing:2px;color:var(--cyan-dim)}
+
+/* ---------- level meter ---------- */
+#meter{position:absolute;right:16px;top:96px;width:16px;height:300px;border:2px solid var(--cyan-dim)}
+#meterFill{position:absolute;left:2px;right:2px;bottom:2px;height:0;background:var(--cyan)}
+#meter.hot #meterFill{background:var(--amber)}
+#thrLine{position:absolute;left:-8px;right:-8px;height:3px;background:var(--amber)}
+#dbVal{position:absolute;right:40px;top:96px;font-size:14px;color:var(--cyan);text-align:right;
+  text-shadow:0 0 4px #000}
+
+/* ---------- alert ---------- */
+#alert{position:absolute;inset:0;border:6px solid var(--amber);opacity:0;pointer-events:none;transition:opacity .15s}
+#alert span{position:absolute;left:50%;top:150px;transform:translateX(-50%);font-weight:700;font-size:40px;
+  letter-spacing:6px;color:var(--amber);text-shadow:0 0 10px #000}
+body.loud #alert{opacity:1}
+#listenTag{position:absolute;left:16px;top:96px;font-size:16px;color:var(--amber);letter-spacing:2px;display:none}
+body.listen #listenTag{display:block}
+
+/* ---------- calibration wedge ---------- */
+#cal{position:absolute;left:16px;right:48px;top:96px;display:none;grid-template-columns:repeat(6,1fr);gap:6px}
+body.cal #cal{display:grid}
+#cal div{height:80px;display:flex;align-items:flex-end;justify-content:center;font-size:13px;padding-bottom:4px;
+  color:var(--cyan);outline:1px solid #0a3a42}
+
+/* ---------- controls ---------- */
+#ctrls{position:absolute;left:16px;right:16px;bottom:16px;display:grid;grid-template-columns:repeat(6,1fr);gap:8px;
+  transition:opacity .3s}
+body.hide #ctrls{opacity:0}
+.tile{--c:var(--cyan-dim);height:84px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:
+   linear-gradient(var(--c),var(--c)) top left/14px 3px no-repeat,
+   linear-gradient(var(--c),var(--c)) top left/3px 14px no-repeat,
+   linear-gradient(var(--c),var(--c)) top right/14px 3px no-repeat,
+   linear-gradient(var(--c),var(--c)) top right/3px 14px no-repeat,
+   linear-gradient(var(--c),var(--c)) bottom left/14px 3px no-repeat,
+   linear-gradient(var(--c),var(--c)) bottom left/3px 14px no-repeat,
+   linear-gradient(var(--c),var(--c)) bottom right/14px 3px no-repeat,
+   linear-gradient(var(--c),var(--c)) bottom right/3px 14px no-repeat,
+   rgba(0,20,26,.85)}
+.tile .k{font-size:12px;letter-spacing:2px;color:var(--cyan-dim)}
+.tile .v{font-size:19px;font-weight:700;color:var(--txt);margin-top:2px}
+.tile.on .v{color:var(--amber)}
+.tile.focus{--c:var(--cyan);box-shadow:0 0 0 1px var(--cyan) inset,0 0 14px rgba(34,230,255,.35)}
+.tile.focus .k{color:var(--cyan)}
+.tile .hint{font-size:11px;color:var(--cyan-dim);height:12px}
+.tile.focus .hint{color:var(--cyan)}
+
+/* ---------- overlays ---------- */
+.ov{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;gap:14px;background:#000}
+.ov.show{display:flex}
+.ov h1{font-size:34px;letter-spacing:4px;color:var(--cyan)}
+.ov p{font-size:18px;max-width:460px;line-height:1.4}
+.ov .big{font-size:22px;color:var(--amber);font-weight:700;letter-spacing:3px}
+</style>
+</head>
+<body class="hide">
+
+<video id="vid" playsinline loop preload="auto"></video>
+
+<div id="top">
+  <div>
+    <div id="title">MONITOR // TEST</div>
+    <div id="diag">loading…</div>
+  </div>
+  <div id="timer">--:--<small>VIEW LEFT</small></div>
+</div>
+
+<!-- night filters: gamma lifts shadows without blowing out highlights -->
+<svg width="0" height="0" style="position:absolute">
+  <filter id="fNight" color-interpolation-filters="sRGB">
+    <feColorMatrix type="saturate" values="0"/>
+    <feComponentTransfer>
+      <feFuncR type="gamma" amplitude="1.15" exponent="0.45" offset="0"/>
+      <feFuncG type="gamma" amplitude="1.15" exponent="0.45" offset="0"/>
+      <feFuncB type="gamma" amplitude="1.15" exponent="0.45" offset="0"/>
+    </feComponentTransfer>
+  </filter>
+  <filter id="fBoost" color-interpolation-filters="sRGB">
+    <feColorMatrix type="saturate" values="0"/>
+    <feComponentTransfer>
+      <feFuncR type="gamma" amplitude="0.75" exponent="0.3" offset="0"/>
+      <feFuncG type="gamma" amplitude="1.6"  exponent="0.3" offset="0"/>
+      <feFuncB type="gamma" amplitude="1.7"  exponent="0.3" offset="0"/>
+    </feComponentTransfer>
+  </filter>
+</svg>
+
+<div id="listenTag">◉ LISTENING</div>
+<div id="cal"></div>
+<div id="meter"><div id="meterFill"></div><div id="thrLine"></div></div>
+<div id="dbVal">-- dB</div>
+<div id="alert"><span>SOUND</span></div>
+
+<div id="ctrls">
+  <div class="tile" data-act="play"><span class="k">VIDEO</span><span class="v" id="vPlay">PLAY</span><span class="hint"></span></div>
+  <div class="tile" data-act="night"><span class="k">NIGHT</span><span class="v" id="vNight">OFF</span><span class="hint"></span></div>
+  <div class="tile" data-act="listen"><span class="k">LISTEN</span><span class="v" id="vListen">OFF</span><span class="hint"></span></div>
+  <div class="tile" data-act="thr"><span class="k">ALERT AT</span><span class="v" id="vThr">-30</span><span class="hint">▲ ▼</span></div>
+  <div class="tile" data-act="tone"><span class="k">AUDIO</span><span class="v">TONE</span><span class="hint"></span></div>
+  <div class="tile" data-act="cal"><span class="k">BLACK</span><span class="v" id="vCal">CAL</span><span class="hint"></span></div>
+</div>
+
+<div class="ov show" id="ovStart">
+  <h1>MONITOR TEST</h1>
+  <p>Video + sound check for the baby-monitor viewer. Sound needs one pinch to unlock.</p>
+  <div class="big">PINCH TO START</div>
+</div>
+<div class="ov" id="ovStop">
+  <h1>VIEW LIMIT</h1>
+  <p id="stopMsg">Paused to save battery.</p>
+  <div class="big">PINCH TO RESUME</div>
+</div>
+
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const body = document.body, v = $('#vid');
+const P = new URLSearchParams(location.search);
+
+/* ---------- config ---------- */
+const SRC = P.get('src') || 'test-clip.mp4';
+const SAME_ORIGIN = new URL(SRC, location.href).origin === location.origin;
+const LIMIT_S = Math.max(0.5, parseFloat(P.get('limit')) || 3) * 60;   // ?limit=minutes
+const WAKE_MS = 10000;      // listen mode: how long video shows after a sound
+const HOLD_MS = 250;        // how long sound must stay over threshold
+const NIGHT = [
+  { name: 'OFF',   f: 'none' },
+  { name: 'NIGHT', f: 'url(#fNight)' },   // grey, gamma 0.45
+  { name: 'BOOST', f: 'url(#fBoost)' },   // cyan-tinted, gamma 0.3 (noisier)
+];
+
+/* ---------- state ---------- */
+let started = false, nightIdx = 0, listen = false, thr = -30, cal = false;
+let ac = null, analyser = null, buf = null;
+let remaining = LIMIT_S, lastT = 0, loudSince = 0, wakeUntil = 0, lastDb = -Infinity;
+let hideTimer = 0, focusIdx = 0;
+const tiles = [...document.querySelectorAll('.tile')];
+
+/* ---------- calibration wedge (which greys survive the transparent black?) ---------- */
+[0, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 255].forEach(g => {
+  const d = document.createElement('div');
+  d.style.background = `rgb(${g},${g},${g})`;
+  d.textContent = g;
+  if (g > 140) d.style.color = '#000';
+  $('#cal').appendChild(d);
+});
+
+/* ---------- video ---------- */
+v.src = SRC;
+v.addEventListener('error', () => diag(`VIDEO ERROR ${v.error ? v.error.code : '?'} — format or URL`));
+v.addEventListener('loadedmetadata', () => diag());
+v.addEventListener('playing', () => { $('#vPlay').textContent = 'PAUSE'; diag(); });
+v.addEventListener('pause', () => { $('#vPlay').textContent = 'PLAY'; diag(); });
+
+function diag(msg) {
+  const res = v.videoWidth ? `${v.videoWidth}×${v.videoHeight}` : 'no frames yet';
+  const st = v.paused ? 'PAUSED' : 'PLAYING';
+  const au = ac ? `audio ${ac.state}` : 'audio locked';
+  const mtr = analyser ? '' : (started && !SAME_ORIGIN ? ' · meter n/a (cross-origin)' : '');
+  $('#diag').textContent = msg || `${res} · ${st} · ${au}${v.muted ? ' · MUTED' : ''}${mtr}`;
+}
+
+/* ---------- audio graph ---------- */
+function initAudio() {
+  ac = new (window.AudioContext || window.webkitAudioContext)();
+  if (SAME_ORIGIN) {                 // cross-origin media would come out silent through WebAudio
+    const src = ac.createMediaElementSource(v);
+    analyser = ac.createAnalyser();
+    analyser.fftSize = 1024;
+    buf = new Float32Array(analyser.fftSize);
+    src.connect(analyser);
+    analyser.connect(ac.destination);
+  }
+}
+
+function levelDb() {
+  if (!analyser || v.paused) return -Infinity;
+  analyser.getFloatTimeDomainData(buf);
+  let s = 0;
+  for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
+  return 20 * Math.log10(Math.sqrt(s / buf.length) + 1e-9);
+}
+
+function tone() {
+  if (!ac) return;
+  ac.resume();
+  const o = ac.createOscillator(), g = ac.createGain(), t = ac.currentTime;
+  o.frequency.value = 660;
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(0.25, t + 0.03);
+  g.gain.linearRampToValueAtTime(0, t + 0.6);
+  o.connect(g).connect(ac.destination);
+  o.start(t); o.stop(t + 0.65);
+}
+
+/* ---------- play / stop ---------- */
+async function play() {
+  if (ac) await ac.resume();
+  v.muted = false;
+  try { await v.play(); }
+  catch (e) { diag(`PLAY BLOCKED: ${e.name}`); }
+  $('#ovStop').classList.remove('show');
+}
+function stop(reason) {
+  v.pause();
+  if (ac) ac.suspend();
+  if (reason) {
+    $('#stopMsg').textContent = reason;
+    $('#ovStop').classList.add('show');
+  }
+}
+
+async function start() {
+  started = true;
+  $('#ovStart').classList.remove('show');
+  initAudio();
+  await play();
+  showCtrls();
+}
+
+/* ---------- controls ---------- */
+const ACTIONS = {
+  play() {
+    if (v.paused) { if (remaining <= 0) remaining = LIMIT_S; play(); }
+    else stop();
+  },
+  night() {
+    nightIdx = (nightIdx + 1) % NIGHT.length;
+    v.style.filter = NIGHT[nightIdx].f;
+    $('#vNight').textContent = NIGHT[nightIdx].name;
+    tiles[1].classList.toggle('on', nightIdx > 0);
+  },
+  listen() {
+    listen = !listen;
+    body.classList.toggle('listen', listen);
+    $('#vListen').textContent = listen ? 'ON' : 'OFF';
+    tiles[2].classList.toggle('on', listen);
+  },
+  thr() { showCtrls(); },
+  tone,
+  cal() {
+    cal = !cal;
+    body.classList.toggle('cal', cal);
+    tiles[5].classList.toggle('on', cal);
+  },
+};
+
+function setThr(d) {
+  thr = Math.max(-60, Math.min(-6, thr + d));
+  $('#vThr').textContent = thr;
+  placeThr();
+}
+function placeThr() {               // meter spans -60 dB (bottom) to 0 dB (top)
+  $('#thrLine').style.bottom = ((thr + 60) / 60 * 296) + 'px';
+}
+
+function setFocus(i) {
+  focusIdx = (i + tiles.length) % tiles.length;
+  tiles.forEach((t, j) => t.classList.toggle('focus', j === focusIdx));
+}
+function showCtrls() {
+  body.classList.remove('hide');
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => body.classList.add('hide'), 5000);
+}
+
+document.addEventListener('keydown', e => {
+  const k = e.key;
+  if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Enter',' '].includes(k)) return;
+  e.preventDefault();
+  if (!started) { if (k === 'Enter' || k === ' ') start(); return; }
+  if ($('#ovStop').classList.contains('show')) {
+    if (k === 'Enter' || k === ' ') { remaining = LIMIT_S; play(); showCtrls(); }
+    return;
+  }
+  const wasHidden = body.classList.contains('hide');
+  showCtrls();
+  if (wasHidden) return;             // first gesture only wakes the controls
+  if (k === 'ArrowLeft') setFocus(focusIdx - 1);
+  else if (k === 'ArrowRight') setFocus(focusIdx + 1);
+  else if (k === 'ArrowUp' && tiles[focusIdx].dataset.act === 'thr') setThr(+3);
+  else if (k === 'ArrowDown' && tiles[focusIdx].dataset.act === 'thr') setThr(-3);
+  else if (k === 'Enter' || k === ' ') ACTIONS[tiles[focusIdx].dataset.act]();
+});
+
+/* mouse / touch, for testing on a laptop or phone */
+tiles.forEach((t, i) => t.addEventListener('click', () => { setFocus(i); showCtrls(); ACTIONS[t.dataset.act](); }));
+$('#ovStart').addEventListener('click', start);
+$('#ovStop').addEventListener('click', () => { remaining = LIMIT_S; play(); });
+$('#thrLine').parentElement.addEventListener('wheel', e => setThr(e.deltaY < 0 ? 3 : -3));
+
+/* pause when the page is hidden (glasses screen off / app switched) */
+document.addEventListener('visibilitychange', () => { if (document.hidden && !v.paused) stop(); });
+
+/* ---------- main loop ---------- */
+function fmt(s) { s = Math.max(0, Math.ceil(s)); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; }
+
+function loop(t) {
+  const dt = lastT ? (t - lastT) / 1000 : 0;
+  lastT = t;
+  const now = performance.now();
+
+  // viewing timer
+  if (!v.paused) {
+    remaining -= dt;
+    if (remaining <= 0) stop('Paused to save battery. Change the limit with ?limit=minutes.');
+  }
+  $('#timer').firstChild.textContent = fmt(remaining);
+
+  // level meter (smoothed: fast attack, slow release)
+  const db = levelDb();
+  lastDb = db > lastDb ? db : lastDb * 0.92 + db * 0.08;
+  if (!isFinite(lastDb)) lastDb = -90;
+  const pct = Math.max(0, Math.min(1, (lastDb + 60) / 60));
+  $('#meterFill').style.height = (pct * 292) + 'px';
+  $('#dbVal').textContent = analyser ? (lastDb < -59 ? '<-60 dB' : `${Math.round(lastDb)} dB`) : '-- dB';
+
+  // alert
+  const over = db > thr;
+  $('#meter').classList.toggle('hot', over);
+  if (over) {
+    if (!loudSince) loudSince = now;
+    if (now - loudSince > HOLD_MS) wakeUntil = now + WAKE_MS;
+  } else loudSince = 0;
+  const alerting = now < wakeUntil;
+  body.classList.toggle('loud', over && now - loudSince > HOLD_MS);
+  body.classList.toggle('awake', alerting);
+
+  if (Math.round(t / 1000) !== Math.round((t - dt * 1000) / 1000)) diag();
+  requestAnimationFrame(loop);
+}
+
+setFocus(0);
+placeThr();
+diag();
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

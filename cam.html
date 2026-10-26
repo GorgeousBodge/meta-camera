@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Monitor Camera</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--cyan:#22e6ff;--cyan-dim:#2a9fb0;--amber:#ffb020;--red:#ff3b3b;--txt:#bfefff}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{min-height:100%;background:#000;color:var(--txt);font-family:'Chakra Petch',system-ui,sans-serif}
+body{padding:20px 16px 32px;max-width:480px;margin:0 auto}
+h1{font-size:22px;letter-spacing:3px;color:var(--cyan)}
+.sub{font-size:13px;color:var(--cyan-dim);letter-spacing:2px;margin-top:2px}
+#state{margin:22px 0 14px;font-size:34px;font-weight:700;letter-spacing:4px;color:var(--cyan-dim)}
+body.armed #state{color:var(--cyan)}
+body.live #state{color:var(--red)}
+#dot{display:inline-block;width:16px;height:16px;border-radius:50%;background:currentColor;margin-right:10px;vertical-align:2px}
+body.live #dot{animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:.2}}
+#info{font-size:15px;line-height:1.5;min-height:46px}
+#preview{width:100%;aspect-ratio:4/3;background:#050a0c;margin:16px 0;object-fit:cover;outline:1px solid #0a3a42}
+body.live.nopreview #preview,body:not(.live) #preview{display:none}
+label{display:block;font-size:12px;letter-spacing:2px;color:var(--cyan-dim);margin:14px 0 6px}
+input,select{width:100%;font:inherit;font-size:17px;padding:12px;background:#02171c;color:var(--txt);
+  border:1px solid var(--cyan-dim);border-radius:0}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+button{width:100%;margin-top:18px;padding:18px;font:inherit;font-size:20px;font-weight:700;letter-spacing:3px;
+  background:#02171c;color:var(--cyan);border:2px solid var(--cyan);border-radius:0}
+button.stop{color:var(--amber);border-color:var(--amber)}
+button.ghost{font-size:15px;padding:12px;border-width:1px;color:var(--cyan-dim);border-color:var(--cyan-dim)}
+#settings[hidden]{display:none}
+#log{margin-top:20px;font-size:12px;line-height:1.5;color:var(--cyan-dim);white-space:pre-wrap;max-height:160px;overflow:auto}
+/* once armed, go nearly black to save the screen (OLED) */
+body.armed:not(.live) #settings,body.armed:not(.live) .ghost{display:none}
+</style>
+</head>
+<body>
+<h1>MONITOR // CAMERA</h1>
+<div class="sub">THIS PHONE IS THE CAMERA</div>
+
+<div id="state"><span id="dot"></span><span id="stateTxt">OFF</span></div>
+<div id="info">Arm the camera, then call it from the glasses. The camera and mic only switch on during a call.</div>
+
+<video id="preview" playsinline muted autoplay></video>
+
+<div id="settings">
+  <label for="key">KEY</label>
+  <input id="key" type="password" autocomplete="off" placeholder="your MONITOR_KEY">
+  <label for="room">CAMERA NAME</label>
+  <input id="room" autocomplete="off" value="cam1">
+  <div class="row">
+    <div>
+      <label for="facing">LENS</label>
+      <select id="facing"><option value="environment">Back</option><option value="user">Front</option></select>
+    </div>
+    <div>
+      <label for="quality">QUALITY</label>
+      <select id="quality"><option value="low">640×480</option><option value="mid">1280×720</option></select>
+    </div>
+  </div>
+  <label><input id="showPrev" type="checkbox" style="width:auto;margin-right:8px" checked>Show preview while live</label>
+</div>
+
+<button id="armBtn">ARM CAMERA</button>
+<button id="endBtn" class="stop" hidden>END CALL</button>
+
+<div id="log"></div>
+
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const body = document.body, P = new URLSearchParams(location.search);
+const POLL_MS = 3000;            // how often an armed camera checks for a call
+const MAX_CALL_S = 10 * 60;      // camera ends any call after this, whatever the viewer does
+
+/* ---------- settings (remembered on this phone) ---------- */
+const store = {
+  get(k, d) { try { return localStorage.getItem('mon_' + k) ?? d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('mon_' + k, v); } catch (e) {} },
+};
+$('#key').value = P.get('k') || store.get('key', '');
+$('#room').value = P.get('room') || store.get('room', 'cam1');
+$('#facing').value = store.get('facing', 'environment');
+$('#quality').value = store.get('quality', 'low');
+$('#showPrev').checked = store.get('prev', '1') === '1';
+if (P.get('k')) { store.set('key', P.get('k')); history.replaceState(null, '', location.pathname); }
+
+function log(msg) {
+  const t = new Date().toTimeString().slice(0, 8);
+  $('#log').textContent = `${t}  ${msg}\n` + $('#log').textContent.slice(0, 2000);
+}
+function setState(cls, txt, info) {
+  body.classList.toggle('armed', cls === 'armed' || cls === 'live');
+  body.classList.toggle('live', cls === 'live');
+  $('#stateTxt').textContent = txt;
+  if (info !== undefined) $('#info').textContent = info;
+}
+
+/* ---------- api ---------- */
+async function api(a, data) {
+  const r = await fetch(`/api/signal?a=${a}&room=${encodeURIComponent($('#room').value)}`, {
+    method: data ? 'POST' : 'GET',
+    headers: { 'x-key': $('#key').value, ...(data ? { 'Content-Type': 'application/json' } : {}) },
+    body: data ? JSON.stringify(data) : undefined,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+  return j;
+}
+
+/* ---------- media ---------- */
+function constraints() {
+  const hi = $('#quality').value === 'mid';
+  return {
+    video: { facingMode: $('#facing').value, width: { ideal: hi ? 1280 : 640 }, height: { ideal: hi ? 720 : 480 },
+             frameRate: { ideal: 15, max: 20 } },
+    // Off: echo cancelling, noise suppression and auto-gain would hide the quiet sounds you want to hear.
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+  };
+}
+
+/* ---------- keep screen on while armed (Android stops timers when it sleeps) ---------- */
+let wakeLock = null;
+async function lockScreen() {
+  try { wakeLock = await navigator.wakeLock.request('screen'); }
+  catch (e) { log('Screen lock not available: keep the screen on manually'); }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && armed) lockScreen();   // the lock drops when hidden
+  if (document.hidden && armed) log('Page hidden: calls may not arrive until it is back on screen');
+});
+
+/* ---------- arm / wait ---------- */
+let armed = false, pollTimer = 0, pc = null, stream = null, callTimer = 0;
+
+async function arm() {
+  if (!$('#key').value) { $('#info').textContent = 'Enter your key first.'; return; }
+  ['key', 'room', 'facing', 'quality'].forEach(id => store.set(id, $('#' + id).value));
+  store.set('prev', $('#showPrev').checked ? '1' : '0');
+  try {
+    await api('status');                         // checks the key before we go any further
+    // Ask for camera + mic once now, so a call later doesn't need a tap.
+    const s = await navigator.mediaDevices.getUserMedia(constraints());
+    s.getTracks().forEach(t => t.stop());
+  } catch (e) { setState('', 'OFF', 'Could not arm: ' + e.message); log(e.message); return; }
+  armed = true;
+  await lockScreen();
+  $('#armBtn').textContent = 'DISARM';
+  $('#armBtn').classList.add('stop');
+  setState('armed', 'ARMED', 'Waiting for a call. Camera and mic are off. Leave this page open.');
+  log('Armed as "' + $('#room').value + '"');
+  poll();
+}
+
+async function disarm() {
+  armed = false;
+  clearTimeout(pollTimer);
+  endCall('Disarmed');
+  try { await api('disarm'); } catch (e) {}
+  try { await wakeLock?.release(); } catch (e) {}
+  $('#armBtn').textContent = 'ARM CAMERA';
+  $('#armBtn').classList.remove('stop');
+  setState('', 'OFF', 'Camera is off and not reachable.');
+}
+
+async function poll() {
+  if (!armed) return;
+  if (!pc) {
+    try {
+      const { offer } = await api('wait');
+      if (offer) await answer(offer);
+    } catch (e) { log('Check-in failed: ' + e.message); }
+  }
+  pollTimer = setTimeout(poll, POLL_MS);
+}
+
+/* ---------- answering a call ---------- */
+function gathered(conn, ms = 3000) {
+  return new Promise(res => {
+    if (conn.iceGatheringState === 'complete') return res();
+    const t = setTimeout(res, ms);
+    conn.addEventListener('icegatheringstatechange', () => {
+      if (conn.iceGatheringState === 'complete') { clearTimeout(t); res(); }
+    });
+  });
+}
+
+async function answer(offer) {
+  log('Incoming call');
+  setState('live', 'CONNECTING', 'Glasses are calling…');
+  try {
+    const { iceServers } = await api('ice');
+    stream = await navigator.mediaDevices.getUserMedia(constraints());
+    pc = new RTCPeerConnection({ iceServers });
+    stream.getTracks().forEach(t => pc.addTrack(t, stream));
+    pc.ondatachannel = e => { e.channel.onclose = () => endCall('Viewer hung up'); };
+    pc.onconnectionstatechange = () => {
+      const s = pc && pc.connectionState;
+      if (s === 'connected') {
+        setState('live', 'LIVE', 'Streaming to the glasses.');
+        log('Connected');
+      }
+      if (s === 'failed' || s === 'closed') endCall('Connection ' + s);
+      if (s === 'disconnected') setTimeout(() => pc && pc.connectionState === 'disconnected' && endCall('Connection lost'), 5000);
+    };
+    await pc.setRemoteDescription(offer);
+    await pc.setLocalDescription(await pc.createAnswer());
+    await gathered(pc);
+    await api('answer', { answer: pc.localDescription });
+    body.classList.toggle('nopreview', !$('#showPrev').checked);
+    $('#preview').srcObject = stream;
+    $('#endBtn').hidden = false;
+    callTimer = setTimeout(() => endCall('Time limit reached'), MAX_CALL_S * 1000);
+  } catch (e) {
+    log('Call failed: ' + e.message);
+    endCall();
+  }
+}
+
+function endCall(why) {
+  clearTimeout(callTimer);
+  if (pc) { try { pc.close(); } catch (e) {} pc = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  $('#preview').srcObject = null;
+  $('#endBtn').hidden = true;
+  if (why) log(why);
+  if (armed) setState('armed', 'ARMED', 'Waiting for a call. Camera and mic are off.');
+}
+
+$('#armBtn').onclick = () => (armed ? disarm() : arm());
+$('#endBtn').onclick = () => endCall('Ended on phone');
+window.addEventListener('pagehide', () => {
+  if (armed) fetch('/api/signal?a=disarm&room=' + encodeURIComponent($('#room').value),
+    { method: 'POST', keepalive: true, headers: { 'x-key': $('#key').value } }).catch(() => {});
+});
+
+if (!window.RTCPeerConnection || !navigator.mediaDevices) setState('', 'OFF', 'This browser cannot stream. Use Chrome on Android.');
+})();
+</script>
+</body>
+</html>

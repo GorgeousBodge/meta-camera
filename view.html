@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=600, initial-scale=1, user-scalable=no">
+<title>Monitor Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--cyan:#22e6ff;--cyan-dim:#2a9fb0;--amber:#ffb020;--txt:#bfefff;--red:#ff4d4d}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:600px;height:600px;background:#000;color:var(--txt);
+  font-family:'Chakra Petch',system-ui,sans-serif;overflow:hidden;user-select:none}
+
+#vid{position:absolute;inset:0;width:600px;height:600px;object-fit:contain;background:#000;
+  transition:filter .25s,opacity .3s}
+body.listen #vid{opacity:0}
+body.listen.awake #vid{opacity:1}
+
+#top{position:absolute;left:16px;right:16px;top:14px;display:flex;justify-content:space-between;
+  align-items:flex-start;pointer-events:none;text-shadow:0 0 6px #000,0 0 2px #000}
+#title{font-weight:700;font-size:20px;letter-spacing:2px;color:var(--cyan)}
+#title .live{color:var(--red);margin-left:8px}
+#diag{font-size:14px;line-height:1.35;margin-top:2px;max-width:430px}
+#timer{font-weight:700;font-size:26px;color:var(--cyan);letter-spacing:1px;text-align:right}
+#timer small{display:block;font-size:12px;font-weight:400;letter-spacing:2px;color:var(--cyan-dim)}
+
+#meter{position:absolute;right:16px;top:96px;width:16px;height:300px;border:2px solid var(--cyan-dim)}
+#meterFill{position:absolute;left:2px;right:2px;bottom:2px;height:0;background:var(--cyan)}
+#meter.hot #meterFill{background:var(--amber)}
+#thrLine{position:absolute;left:-8px;right:-8px;height:3px;background:var(--amber)}
+#dbVal{position:absolute;right:40px;top:96px;font-size:14px;color:var(--cyan);text-align:right;text-shadow:0 0 4px #000}
+
+#alert{position:absolute;inset:0;border:6px solid var(--amber);opacity:0;pointer-events:none;transition:opacity .15s}
+#alert span{position:absolute;left:50%;top:150px;transform:translateX(-50%);font-weight:700;font-size:40px;
+  letter-spacing:6px;color:var(--amber);text-shadow:0 0 10px #000}
+body.loud #alert{opacity:1}
+#listenTag{position:absolute;left:16px;top:96px;font-size:16px;color:var(--amber);letter-spacing:2px;display:none}
+body.listen #listenTag{display:block}
+
+#cal{position:absolute;left:16px;right:48px;top:96px;display:none;grid-template-columns:repeat(6,1fr);gap:6px}
+body.cal #cal{display:grid}
+#cal div{height:80px;display:flex;align-items:flex-end;justify-content:center;font-size:13px;padding-bottom:4px;
+  color:var(--cyan);outline:1px solid #0a3a42}
+
+#ctrls{position:absolute;left:16px;right:16px;bottom:16px;display:grid;grid-template-columns:repeat(5,1fr);gap:8px;
+  transition:opacity .3s}
+body.hide #ctrls{opacity:0}
+.tile{--c:var(--cyan-dim);height:84px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:
+   linear-gradient(var(--c),var(--c)) top left/14px 3px no-repeat,
+   linear-gradient(var(--c),var(--c)) top left/3px 14px no-repeat,
+   linear-gradient(var(--c),var(--c)) top right/14px 3px no-repeat,
+   linear-gradient(var(--c),var(--c)) top right/3px 14px no-repeat,
+   linear-gradient(var(--c),var(--c)) bottom left/14px 3px no-repeat,
+   linear-gradient(var(--c),var(--c)) bottom left/3px 14px no-repeat,
+   linear-gradient(var(--c),var(--c)) bottom right/14px 3px no-repeat,
+   linear-gradient(var(--c),var(--c)) bottom right/3px 14px no-repeat,
+   rgba(0,20,26,.85)}
+.tile .k{font-size:12px;letter-spacing:2px;color:var(--cyan-dim)}
+.tile .v{font-size:19px;font-weight:700;color:var(--txt);margin-top:2px}
+.tile.on .v{color:var(--amber)}
+.tile.focus{--c:var(--cyan);box-shadow:0 0 0 1px var(--cyan) inset,0 0 14px rgba(34,230,255,.35)}
+.tile.focus .k{color:var(--cyan)}
+.tile .hint{font-size:11px;color:var(--cyan-dim);height:12px}
+.tile.focus .hint{color:var(--cyan)}
+
+#ov{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;gap:14px;background:#000}
+body.incall #ov{display:none}
+#ov h1{font-size:34px;letter-spacing:4px;color:var(--cyan)}
+#ov p{font-size:18px;max-width:470px;line-height:1.4}
+#ovCam{font-size:18px;letter-spacing:2px}
+#ovCam.on{color:var(--cyan)} #ovCam.off{color:var(--cyan-dim)}
+#ovBig{font-size:22px;color:var(--amber);font-weight:700;letter-spacing:3px}
+</style>
+</head>
+<body class="hide">
+
+<svg width="0" height="0" style="position:absolute">
+  <filter id="fNight" color-interpolation-filters="sRGB">
+    <feColorMatrix type="saturate" values="0"/>
+    <feComponentTransfer>
+      <feFuncR type="gamma" amplitude="1.15" exponent="0.45"/>
+      <feFuncG type="gamma" amplitude="1.15" exponent="0.45"/>
+      <feFuncB type="gamma" amplitude="1.15" exponent="0.45"/>
+    </feComponentTransfer>
+  </filter>
+  <filter id="fBoost" color-interpolation-filters="sRGB">
+    <feColorMatrix type="saturate" values="0"/>
+    <feComponentTransfer>
+      <feFuncR type="gamma" amplitude="0.75" exponent="0.3"/>
+      <feFuncG type="gamma" amplitude="1.6" exponent="0.3"/>
+      <feFuncB type="gamma" amplitude="1.7" exponent="0.3"/>
+    </feComponentTransfer>
+  </filter>
+</svg>
+
+<video id="vid" playsinline autoplay></video>
+
+<div id="top">
+  <div>
+    <div id="title">MONITOR // <span id="camName">CAM1</span><span class="live" id="liveTag"></span></div>
+    <div id="diag"></div>
+  </div>
+  <div id="timer">--:--<small>VIEW LEFT</small></div>
+</div>
+
+<div id="listenTag">◉ LISTENING</div>
+<div id="cal"></div>
+<div id="meter"><div id="meterFill"></div><div id="thrLine"></div></div>
+<div id="dbVal">-- dB</div>
+<div id="alert"><span>SOUND</span></div>
+
+<div id="ctrls">
+  <div class="tile" data-act="end"><span class="k">CALL</span><span class="v">END</span><span class="hint"></span></div>
+  <div class="tile" data-act="night"><span class="k">NIGHT</span><span class="v" id="vNight">OFF</span><span class="hint"></span></div>
+  <div class="tile" data-act="listen"><span class="k">LISTEN</span><span class="v" id="vListen">OFF</span><span class="hint"></span></div>
+  <div class="tile" data-act="thr"><span class="k">ALERT AT</span><span class="v" id="vThr">-30</span><span class="hint">▲ ▼</span></div>
+  <div class="tile" data-act="cal"><span class="k">BLACK</span><span class="v">CAL</span><span class="hint"></span></div>
+</div>
+
+<div id="ov">
+  <h1>MONITOR</h1>
+  <div id="ovCam" class="off">CHECKING CAMERA…</div>
+  <p id="ovMsg">Pinch to call the camera.</p>
+  <div id="ovBig">PINCH TO CALL</div>
+</div>
+
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const body = document.body, v = $('#vid'), P = new URLSearchParams(location.search);
+
+/* ---------- config ---------- */
+const store = {
+  get(k, d) { try { return localStorage.getItem('mon_' + k) ?? d; } catch (e) { return d; } },
+  set(k, val) { try { localStorage.setItem('mon_' + k, val); } catch (e) {} },
+};
+if (P.get('k')) store.set('key', P.get('k'));
+if (P.get('limit')) store.set('limit', P.get('limit'));
+const KEY = store.get('key', '');
+const ROOM = (P.get('room') || 'cam1').replace(/[^a-z0-9_-]/gi, '') || 'cam1';
+const LIMIT_S = Math.max(0.5, parseFloat(store.get('limit', '3')) || 3) * 60;   // ?limit=minutes (remembered)
+const WAKE_MS = 10000, HOLD_MS = 250;
+const NIGHT = [{ name: 'OFF', f: 'none' }, { name: 'NIGHT', f: 'url(#fNight)' }, { name: 'BOOST', f: 'url(#fBoost)' }];
+if (P.get('k')) history.replaceState(null, '', location.pathname + (P.get('room') ? '?room=' + ROOM : ''));
+$('#camName').textContent = ROOM.toUpperCase();
+
+/* ---------- state ---------- */
+let pc = null, dc = null, phase = 'idle';           // idle | calling | live
+let ac = null, analyser = null, buf = null;
+let nightIdx = 0, listen = false, thr = -30, cal = false;
+let remaining = LIMIT_S, lastT = 0, loudSince = 0, wakeUntil = 0, lastDb = -90;
+let hideTimer = 0, focusIdx = 0, statsTimer = 0, route = '';
+const tiles = [...document.querySelectorAll('.tile')];
+
+[0, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 255].forEach(g => {
+  const d = document.createElement('div');
+  d.style.background = `rgb(${g},${g},${g})`; d.textContent = g;
+  if (g > 140) d.style.color = '#000';
+  $('#cal').appendChild(d);
+});
+
+/* ---------- api ---------- */
+async function api(a, data) {
+  const r = await fetch(`/api/signal?a=${a}&room=${ROOM}`, {
+    method: data ? 'POST' : 'GET',
+    headers: { 'x-key': KEY, ...(data ? { 'Content-Type': 'application/json' } : {}) },
+    body: data ? JSON.stringify(data) : undefined,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+  return j;
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function overlay(msg, big = 'PINCH TO CALL') {
+  body.classList.remove('incall');
+  $('#ovMsg').textContent = msg;
+  $('#ovBig').textContent = big;
+}
+async function checkCam() {
+  if (!KEY) {
+    $('#ovCam').textContent = 'NO KEY';
+    overlay('Open this page once as view.html?k=YOURKEY (it is then remembered).', '');
+    return false;
+  }
+  try {
+    const { camOnline } = await api('status');
+    $('#ovCam').textContent = camOnline ? '● CAMERA ARMED' : '○ CAMERA OFFLINE';
+    $('#ovCam').className = camOnline ? 'on' : 'off';
+    return camOnline;
+  } catch (e) {
+    $('#ovCam').textContent = 'ERROR: ' + e.message.toUpperCase();
+    return false;
+  }
+}
+
+/* ---------- calling ---------- */
+function gathered(conn, ms = 3000) {
+  return new Promise(res => {
+    if (conn.iceGatheringState === 'complete') return res();
+    const t = setTimeout(res, ms);
+    conn.addEventListener('icegatheringstatechange', () => {
+      if (conn.iceGatheringState === 'complete') { clearTimeout(t); res(); }
+    });
+  });
+}
+
+async function call() {
+  if (phase !== 'idle' || !KEY) return;
+  phase = 'calling';
+  // Created inside the pinch so sound is allowed.
+  if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+  ac.resume();
+  overlay('Calling…', '');
+  try {
+    if (!(await checkCam())) { phase = 'idle'; overlay('Camera is not armed. Open cam.html on the phone and tap ARM.'); return; }
+    const { iceServers } = await api('ice');
+    pc = new RTCPeerConnection({ iceServers });
+    pc.addTransceiver('video', { direction: 'recvonly' });
+    pc.addTransceiver('audio', { direction: 'recvonly' });
+    dc = pc.createDataChannel('ctl');              // closing it tells the phone to stop
+    const remote = new MediaStream();
+    pc.ontrack = e => {
+      remote.addTrack(e.track);
+      v.srcObject = remote;
+      if (e.track.kind === 'audio') hookMeter(remote);
+    };
+    pc.onconnectionstatechange = () => {
+      const s = pc && pc.connectionState;
+      if (s === 'connected') goLive();
+      if (s === 'failed') hangup('Connection failed. Try again; if it keeps failing, the relay is not set up.');
+      if (s === 'disconnected') setTimeout(() => pc && pc.connectionState === 'disconnected' && hangup('Signal lost.'), 5000);
+    };
+    await pc.setLocalDescription(await pc.createOffer());
+    await gathered(pc);
+    await api('call', { offer: pc.localDescription });
+    $('#ovMsg').textContent = 'Waking the camera…';
+    for (let i = 0; i < 20; i++) {                // camera checks in every 3 s
+      await sleep(1000);
+      if (phase !== 'calling') return;
+      const { answer } = await api('poll');
+      if (answer) { await pc.setRemoteDescription(answer); $('#ovMsg').textContent = 'Connecting…'; return; }
+    }
+    hangup('No answer from the camera.');
+  } catch (e) {
+    hangup('Call failed: ' + e.message);
+  }
+}
+
+function goLive() {
+  if (phase === 'live') return;
+  phase = 'live';
+  remaining = LIMIT_S;
+  body.classList.add('incall');
+  $('#liveTag').textContent = '● LIVE';
+  v.play().catch(e => diag('PLAY BLOCKED: ' + e.name));
+  setFocus(0); showCtrls();
+  statsTimer = setInterval(readStats, 2000);
+}
+
+function hangup(msg) {
+  clearInterval(statsTimer);
+  if (dc) { try { dc.close(); } catch (e) {} dc = null; }
+  if (pc) { try { pc.close(); } catch (e) {} pc = null; }
+  v.srcObject = null;
+  analyser = null;
+  phase = 'idle'; route = '';
+  $('#liveTag').textContent = '';
+  if (listen) ACTIONS.listen();
+  body.classList.remove('loud', 'awake');
+  overlay(msg || 'Call ended.');
+  checkCam();
+}
+
+function hookMeter(stream) {
+  // Read the level only; the <video> element plays the sound itself.
+  const src = ac.createMediaStreamSource(stream);
+  analyser = ac.createAnalyser();
+  analyser.fftSize = 1024;
+  buf = new Float32Array(analyser.fftSize);
+  src.connect(analyser);
+}
+
+async function readStats() {
+  if (!pc) return;
+  const stats = await pc.getStats();
+  let pair, local, vin;
+  stats.forEach(s => {
+    if (s.type === 'transport' && s.selectedCandidatePairId) pair = stats.get(s.selectedCandidatePairId);
+    if (s.type === 'inbound-rtp' && s.kind === 'video') vin = s;
+  });
+  if (pair) local = stats.get(pair.localCandidateId);
+  route = local ? (local.candidateType === 'relay' ? 'RELAY' : 'DIRECT') : '';
+  const res = vin && vin.frameWidth ? `${vin.frameWidth}×${vin.frameHeight} ${Math.round(vin.framesPerSecond || 0)}fps` : 'no video yet';
+  diag(`${res} · ${route}${pair && pair.currentRoundTripTime ? ' · ' + Math.round(pair.currentRoundTripTime * 1000) + 'ms' : ''}`);
+}
+function diag(t) { $('#diag').textContent = t; }
+
+/* ---------- controls ---------- */
+const ACTIONS = {
+  end() { hangup('Call ended.'); },
+  night() {
+    nightIdx = (nightIdx + 1) % NIGHT.length;
+    v.style.filter = NIGHT[nightIdx].f;
+    $('#vNight').textContent = NIGHT[nightIdx].name;
+    tiles[1].classList.toggle('on', nightIdx > 0);
+  },
+  listen() {
+    listen = !listen;
+    body.classList.toggle('listen', listen);
+    $('#vListen').textContent = listen ? 'ON' : 'OFF';
+    tiles[2].classList.toggle('on', listen);
+  },
+  thr() {},
+  cal() { cal = !cal; body.classList.toggle('cal', cal); tiles[4].classList.toggle('on', cal); },
+};
+function setThr(d) { thr = Math.max(-60, Math.min(-6, thr + d)); $('#vThr').textContent = thr; placeThr(); }
+function placeThr() { $('#thrLine').style.bottom = ((thr + 60) / 60 * 296) + 'px'; }
+function setFocus(i) {
+  focusIdx = (i + tiles.length) % tiles.length;
+  tiles.forEach((t, j) => t.classList.toggle('focus', j === focusIdx));
+}
+function showCtrls() {
+  body.classList.remove('hide');
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => body.classList.add('hide'), 5000);
+}
+
+document.addEventListener('keydown', e => {
+  const k = e.key;
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', ' '].includes(k)) return;
+  e.preventDefault();
+  if (phase !== 'live') { if ((k === 'Enter' || k === ' ') && phase === 'idle') call(); return; }
+  const wasHidden = body.classList.contains('hide');
+  showCtrls();
+  if (wasHidden) return;
+  const act = tiles[focusIdx].dataset.act;
+  if (k === 'ArrowLeft') setFocus(focusIdx - 1);
+  else if (k === 'ArrowRight') setFocus(focusIdx + 1);
+  else if (k === 'ArrowUp' && act === 'thr') setThr(3);
+  else if (k === 'ArrowDown' && act === 'thr') setThr(-3);
+  else if (k === 'Enter' || k === ' ') ACTIONS[act]();
+});
+tiles.forEach((t, i) => t.addEventListener('click', () => { setFocus(i); showCtrls(); ACTIONS[t.dataset.act](); }));
+$('#ov').addEventListener('click', call);
+document.addEventListener('visibilitychange', () => { if (document.hidden && phase !== 'idle') hangup('Ended: screen went off.'); });
+window.addEventListener('pagehide', () => { if (pc) hangup(); });
+
+/* ---------- main loop ---------- */
+function fmt(s) { s = Math.max(0, Math.ceil(s)); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; }
+function levelDb() {
+  if (!analyser) return -Infinity;
+  analyser.getFloatTimeDomainData(buf);
+  let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
+  return 20 * Math.log10(Math.sqrt(s / buf.length) + 1e-9);
+}
+function loop(t) {
+  const dt = lastT ? (t - lastT) / 1000 : 0; lastT = t;
+  const now = performance.now();
+  if (phase === 'live') {
+    remaining -= dt;
+    if (remaining <= 0) hangup('Time limit reached (saves battery). Change it with ?limit=minutes.');
+  }
+  $('#timer').firstChild.textContent = phase === 'live' ? fmt(remaining) : fmt(LIMIT_S);
+
+  const db = levelDb();
+  lastDb = Math.max(-90, db > lastDb ? db : lastDb * 0.92 + db * 0.08);
+  if (!isFinite(lastDb)) lastDb = -90;
+  $('#meterFill').style.height = (Math.max(0, Math.min(1, (lastDb + 60) / 60)) * 292) + 'px';
+  $('#dbVal').textContent = analyser ? (lastDb < -59 ? '<-60 dB' : `${Math.round(lastDb)} dB`) : '-- dB';
+
+  const over = db > thr;
+  $('#meter').classList.toggle('hot', over);
+  if (over) { if (!loudSince) loudSince = now; if (now - loudSince > HOLD_MS) wakeUntil = now + WAKE_MS; }
+  else loudSince = 0;
+  body.classList.toggle('loud', over && now - loudSince > HOLD_MS);
+  body.classList.toggle('awake', now < wakeUntil);
+  requestAnimationFrame(loop);
+}
+
+placeThr(); setFocus(0);
+if (!window.RTCPeerConnection) overlay('This browser cannot receive WebRTC video.', '');
+else checkCam();
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
